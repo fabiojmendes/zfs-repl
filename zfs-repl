@@ -1,0 +1,85 @@
+#!/usr/bin/python3
+# coding: utf-8
+
+import re
+import time
+from pprint import pprint
+from subprocess import CalledProcessError, run
+
+SNAP_PREFIX = "snap-"
+SNAP_PATTERN = re.compile(r"snap-\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$")
+TARGET = "zfs-target.vm.lan"
+SRC_DATASET = "tank/data/backup"
+DST_DATASET = "tank/replication/backup"
+
+
+def snap(dataset, timestamp):
+    snapshot_name = f"{dataset}@{SNAP_PREFIX}{timestamp}"
+    run(["zfs", "snapshot", snapshot_name], check=True)
+    return snapshot_name
+
+
+def list_snaps(dataset, host=None):
+    args = ["zfs", "list", "-t", "snapshot", "-H", "-o", "name", dataset]
+    if host:
+        args = ["ssh", host] + args
+    cmd = run(args, capture_output=True)
+    snaps = cmd.stdout.decode().split()
+    return [x for x in snaps if SNAP_PATTERN.search(x)]
+
+
+def send(snapshot, host, target_dataset, base_snaphost=None):
+    args = ["zfs", "send"]
+    if base_snaphost:
+        args += ["-I", base_snaphost]
+    args.append(snapshot)
+    send_cmd = run(args, capture_output=True, check=True)
+    run(
+        ["ssh", host, "zfs", "receive", "-vF", target_dataset],
+        input=send_cmd.stdout,
+        check=True,
+    )
+
+
+def prune(snapshots, host=None, keep=1):
+    print(f"Current snaps on {host if host else 'localhost'}:")
+    pprint(snapshots)
+    if len(snapshots) > keep:
+        print("Purge Snaps:")
+        begin = snapshots[0]
+        end = snapshots[-keep - 1].split("@")[1]
+        args = ["zfs", "destroy", "-v", f"{begin}%{end}"]
+        if host:
+            args = ["ssh", host] + args
+        run(args, check=True)
+
+
+def main():
+    print("Start replication from", SRC_DATASET, "to", DST_DATASET, "on", TARGET)
+    timestamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+    snapshot_name = snap(SRC_DATASET, timestamp)
+
+    remote_snaps = list_snaps(DST_DATASET, TARGET)
+
+    if remote_snaps:
+        print("Sending incremental stream")
+        latest_snap = remote_snaps[-1].split("@")[1]
+        send(snapshot_name, TARGET, DST_DATASET, base_snaphost=latest_snap)
+    else:
+        print("No base snaphost found, send full stream")
+        send(snapshot_name, TARGET, DST_DATASET)
+
+    local_snaps = list_snaps(SRC_DATASET)
+    prune(local_snaps)
+    remote_snaps = list_snaps(DST_DATASET, TARGET)
+    prune(remote_snaps, host=TARGET)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except CalledProcessError as e:
+        if e.stderr:
+            print(e.stderr.decode(), end="")
+        print(e)
+        exit(e.returncode)
