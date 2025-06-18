@@ -64,6 +64,7 @@ def main():
     config = ConfigParser()
     config.read(args.config_file)
     host = config["ssh"]["host"]
+    snaps_keep = int(config["snapshot"]["keep"])
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%S")
 
     for src_dataset, dst_dataset in config["datasets"].items():
@@ -81,9 +82,9 @@ def main():
             send(snapshot_name, host, dst_dataset)
 
         local_snaps = list_snaps(src_dataset)
-        prune(local_snaps)
+        prune(local_snaps, keep=snaps_keep)
         remote_snaps = list_snaps(dst_dataset, host)
-        prune(remote_snaps, host=host)
+        prune(remote_snaps, host=host, keep=snaps_keep)
 
 
 if __name__ == "__main__":
