@@ -33,11 +33,13 @@ def send(snapshot, host, target_dataset, base_snaphost=None):
         args += ["-I", base_snaphost]
     args.append(snapshot)
     send_cmd = run(args, capture_output=True, check=True)
-    run(
+    recv_cmd = run(
         ["ssh", host, "zfs", "receive", "-vF", target_dataset],
         input=send_cmd.stdout,
+        capture_output=True,
         check=True,
     )
+    print(recv_cmd.stdout.decode())
 
 
 def prune(snapshots, host=None, keep=1):
@@ -50,7 +52,8 @@ def prune(snapshots, host=None, keep=1):
         args = ["zfs", "destroy", "-v", f"{begin}%{end}"]
         if host:
             args = ["ssh", host] + args
-        run(args, check=True)
+        prune_cmd = run(args, capture_output=True, check=True)
+        print(prune_cmd.stdout.decode())
 
 
 def main():
