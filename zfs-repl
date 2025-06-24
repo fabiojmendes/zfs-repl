@@ -6,7 +6,7 @@ import time
 from argparse import ArgumentParser
 from configparser import ConfigParser
 from pprint import pprint
-from subprocess import CalledProcessError, run
+from subprocess import Popen, PIPE, CalledProcessError, run
 
 SNAP_PREFIX = "snap-"
 SNAP_PATTERN = re.compile(r"snap-\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$")
@@ -32,14 +32,23 @@ def send(snapshot, host, target_dataset, base_snaphost=None):
     if base_snaphost:
         args += ["-I", base_snaphost]
     args.append(snapshot)
-    send_cmd = run(args, capture_output=True, check=True)
-    recv_cmd = run(
+
+    send_cmd = Popen(args, stdout=PIPE, stderr=PIPE)
+    recv_cmd = Popen(
         ["ssh", host, "zfs", "receive", "-vF", target_dataset],
-        input=send_cmd.stdout,
-        capture_output=True,
-        check=True,
+        stdin=send_cmd.stdout,
+        stdout=PIPE,
+        stderr=PIPE,
     )
-    print(recv_cmd.stdout.decode())
+    send_cmd.stdout.close()
+    r_stdout, r_stderr = recv_cmd.communicate()
+    s_stdout, s_stderr = send_cmd.communicate()
+    if send_cmd.returncode != 0:
+        raise CalledProcessError(send_cmd.returncode, send_cmd, stdout=s_stdout, stderr=s_stderr)
+    if recv_cmd.returncode != 0:
+        raise CalledProcessError(recv_cmd.returncode, recv_cmd, stdout=r_stdout, stderr=r_stderr)
+    print(r_stdout.decode(), end="")
+
 
 
 def prune(snapshots, host=None, keep=1):
