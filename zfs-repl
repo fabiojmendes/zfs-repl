@@ -80,6 +80,7 @@ def main():
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%S")
 
     for src_dataset, dst_dataset in config["datasets"].items():
+        print("##################################################################")
         print("Start replication from", src_dataset, "to", dst_dataset, "on", host)
         snapshot_name = snap(src_dataset, timestamp)
 
