@@ -43,12 +43,11 @@ def send(snapshot, host, target_dataset, base_snaphost=None):
     send_cmd.stdout.close()
     r_stdout, r_stderr = recv_cmd.communicate()
     s_stdout, s_stderr = send_cmd.communicate()
-    if send_cmd.returncode != 0:
-        raise CalledProcessError(send_cmd.returncode, send_cmd, stdout=s_stdout, stderr=s_stderr)
     if recv_cmd.returncode != 0:
-        raise CalledProcessError(recv_cmd.returncode, recv_cmd, stdout=r_stdout, stderr=r_stderr)
+        raise CalledProcessError(recv_cmd.returncode, recv_cmd.args, r_stdout, r_stderr)
+    if send_cmd.returncode != 0:
+        raise CalledProcessError(send_cmd.returncode, send_cmd.args, s_stdout, s_stderr)
     print(r_stdout.decode(), end="")
-
 
 
 def prune(snapshots, host=None, keep=1):
