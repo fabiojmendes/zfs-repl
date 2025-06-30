@@ -3,17 +3,30 @@
 
 import re
 import time
+from dataclasses import dataclass
+from datetime import datetime
 from argparse import ArgumentParser
 from configparser import ConfigParser
 from pprint import pprint
 from subprocess import Popen, PIPE, CalledProcessError, run
 
-SNAP_PREFIX = "snap-"
+SNAP_TIME_FORMAT = "snap-%Y-%m-%dT%H:%M:%S"
 SNAP_PATTERN = re.compile(r"snap-\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$")
 
 
+class PipelineError(Exception):
+    pass
+
+
+@dataclass
+class RetentionPolicy:
+    monthly: int
+    weekly: int
+    daily: int
+
+
 def snap(dataset, timestamp):
-    snapshot_name = f"{dataset}@{SNAP_PREFIX}{timestamp}"
+    snapshot_name = f"{dataset}@{timestamp}"
     run(["zfs", "snapshot", snapshot_name], check=True)
     return snapshot_name
 
@@ -40,24 +53,53 @@ def send(snapshot, host, target_dataset, base_snaphost=None):
         stdout=PIPE,
         stderr=PIPE,
     )
-    send_cmd.stdout.close()
+    if send_cmd.stdout is not None:
+        send_cmd.stdout.close()
     r_stdout, r_stderr = recv_cmd.communicate()
     s_stdout, s_stderr = send_cmd.communicate()
-    if recv_cmd.returncode != 0:
-        raise CalledProcessError(recv_cmd.returncode, recv_cmd.args, r_stdout, r_stderr)
-    if send_cmd.returncode != 0:
-        raise CalledProcessError(send_cmd.returncode, send_cmd.args, s_stdout, s_stderr)
+    if send_cmd.returncode != 0 or recv_cmd.returncode != 0:
+        raise PipelineError(
+            CalledProcessError(send_cmd.returncode, send_cmd.args, s_stdout, s_stderr),
+            CalledProcessError(recv_cmd.returncode, recv_cmd.args, r_stdout, r_stderr),
+        )
+
     print(r_stdout.decode(), end="")
 
 
-def prune(snapshots, host=None, keep=1):
+def retain_list(snapshots, policy):
+    date_map = {
+        snap: datetime.strptime(snap.split("@")[1], SNAP_TIME_FORMAT)
+        for snap in snapshots
+    }
+    retain = set()
+    retain.update(
+        [snap for snap, date in date_map.items() if date.day == 1][-policy.monthly :]
+    )
+    retain.update(
+        [snap for snap, date in date_map.items() if date.weekday() == 0][
+            -policy.weekly :
+        ]
+    )
+    retain.update([snap for snap, _ in date_map.items()][-policy.daily :])
+    return retain
+
+
+def prune(snapshots, policy, host=None):
     print(f"Current snaps on {host if host else 'localhost'}:")
     pprint(snapshots)
-    if len(snapshots) > keep:
+    retain = retain_list(snapshots, policy)
+    print("Retain list:")
+    pprint(sorted(retain))
+    print("Prune list:")
+    prune_list = list(set(snapshots).difference(retain))
+    pprint(prune_list)
+    if prune_list:
         print("Purge Snaps:")
-        begin = snapshots[0]
-        end = snapshots[-keep - 1].split("@")[1]
-        args = ["zfs", "destroy", "-v", f"{begin}%{end}"]
+        prune_snaps = prune_list[0]
+        for snap in prune_list[1:]:
+            prune_snaps += "," + snap.split("@")[1]
+
+        args = ["zfs", "destroy", "-v", prune_snaps]
         if host:
             args = ["ssh", host] + args
         prune_cmd = run(args, capture_output=True, check=True)
@@ -75,8 +117,9 @@ def main():
     config = ConfigParser()
     config.read(args.config_file)
     host = config["ssh"]["host"]
-    snaps_keep = int(config["snapshot"]["keep"])
-    timestamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+    parsed_retention = {name: int(value) for name, value in config["retention"].items()}
+    retention_policy = RetentionPolicy(**parsed_retention)
+    timestamp = time.strftime(SNAP_TIME_FORMAT)
 
     for src_dataset, dst_dataset in config["datasets"].items():
         print("##################################################################")
@@ -94,16 +137,24 @@ def main():
             send(snapshot_name, host, dst_dataset)
 
         local_snaps = list_snaps(src_dataset)
-        prune(local_snaps, keep=snaps_keep)
+        prune(local_snaps, retention_policy)
         remote_snaps = list_snaps(dst_dataset, host)
-        prune(remote_snaps, host=host, keep=snaps_keep)
+        prune(remote_snaps, retention_policy, host=host)
 
 
 if __name__ == "__main__":
     try:
         main()
     except CalledProcessError as e:
+        print(e)
         if e.stderr:
             print(e.stderr.decode(), end="")
-        print(e)
         exit(e.returncode)
+    except PipelineError as pe:
+        returncode = 0
+        for e in pe.args:
+            print(e)
+            if e.stderr:
+                print(e.stderr.decode(), end="")
+            returncode += e.returncode
+        exit(returncode)
