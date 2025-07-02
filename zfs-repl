@@ -89,7 +89,7 @@ def send(snapshot, host, target_dataset, base_snaphost=None):
     print(r_stdout.decode(), end="")
 
 
-def retain_list(snapshots, policy):
+def retain_set(snapshots, policy):
     date_map = {
         snap: datetime.strptime(snap.split("@")[1], SNAP_TIME_FORMAT)
         for snap in snapshots
@@ -103,6 +103,7 @@ def retain_list(snapshots, policy):
             -policy.weekly :
         ]
     )
+    # FIXME look into actual dates to prune dailies
     retain.update([snap for snap, _ in date_map.items()][-policy.daily :])
     return retain
 
@@ -110,19 +111,19 @@ def retain_list(snapshots, policy):
 def prune(snapshots, policy, host=None):
     print(f"Current snaps on {host if host else 'localhost'}:")
     pprint(snapshots)
-    retain = retain_list(snapshots, policy)
+    retain = retain_set(snapshots, policy)
     print("Retain list:")
     pprint(sorted(retain))
     print("Prune list:")
-    prune_list = list(set(snapshots).difference(retain))
+    prune_list = sorted(set(snapshots) - retain)
     pprint(prune_list)
     if prune_list:
         print("Purge Snaps:")
-        prune_snaps = prune_list[0]
-        for snap in prune_list[1:]:
-            prune_snaps += "," + snap.split("@")[1]
+        prune_snaps = prune_list[0:1] + list(
+            map(lambda x: x.split("@")[1], prune_list[1:])
+        )
 
-        args = ["zfs", "destroy", "-v", prune_snaps]
+        args = ["zfs", "destroy", "-v", ",".join(prune_snaps)]
         if host:
             args = ["ssh", host] + args
         prune_cmd = run(args, capture_output=True, check=True)
