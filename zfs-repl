@@ -71,7 +71,7 @@ def list_snaps(dataset, host=None):
 
 
 def send(snapshot, host, target_dataset, base_snaphost=None):
-    args = ["zfs", "send"]
+    args = ["zfs", "send", "-ceL"]
     if base_snaphost:
         args += ["-I", base_snaphost]
     args.append(snapshot)
