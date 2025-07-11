@@ -182,18 +182,18 @@ def main():
         try:
             process_dataset(src_dataset, dst_dataset, timestamp, config)
         except CalledProcessError as e:
-            print(e)
+            print("Error calling proccess:", e)
             if e.stderr:
                 print(e.stderr.decode(), end="")
             returncode += e.returncode
         except PipelineError as pe:
             for e in pe.args:
-                print(e)
+                print("Command pipeline error:", e)
                 if e.stderr:
                     print(e.stderr.decode(), end="")
                 returncode += e.returncode
 
-    if returncode > 0:
+    if returncode != 0:
         print("##################################################################")
         print("Errors were found while processing datasets")
         exit(1)
