@@ -115,8 +115,8 @@ def prune(snapshots, policy, host=None):
     print(f"Current snaps on {host if host else 'localhost'}:")
     pprint(snapshots)
     retain = retain_set(snapshots, policy)
-    print("Retain set:")
-    pprint(sorted(retain))
+    # print("Retain set:")
+    # pprint(sorted(retain))
     if not retain:
         raise AssertionError("Retain list should not be empty")
     print("Prune list:")
