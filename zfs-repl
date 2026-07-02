@@ -19,10 +19,33 @@ class PipelineError(Exception):
 
 
 @dataclass
-class RetentionPolicy:
+class SSHConfig:
+    host: str
+
+
+@dataclass
+class RetentionConfig:
     monthly: int
     weekly: int
     daily: int
+
+
+@dataclass
+class Config:
+    ssh: SSHConfig
+    retention: RetentionConfig
+    datasets: dict
+
+    @classmethod
+    def parse(cls, raw_config):
+        parsed_retention = {
+            name: int(value) for name, value in raw_config["retention"].items()
+        }
+        return Config(
+            ssh=SSHConfig(host=raw_config["ssh"]["host"]),
+            retention=RetentionConfig(**parsed_retention),
+            datasets=raw_config["datasets"],
+        )
 
 
 def snap(dataset, timestamp):
@@ -114,32 +137,37 @@ def main():
     parser.add_argument("-f", dest="config_file", default="config.ini")
     args = parser.parse_args()
 
-    config = ConfigParser()
-    config.read(args.config_file)
-    host = config["ssh"]["host"]
-    parsed_retention = {name: int(value) for name, value in config["retention"].items()}
-    retention_policy = RetentionPolicy(**parsed_retention)
+    raw_config = ConfigParser()
+    raw_config.read(args.config_file)
+    config = Config.parse(raw_config)
     timestamp = time.strftime(SNAP_TIME_FORMAT)
 
-    for src_dataset, dst_dataset in config["datasets"].items():
+    for src_dataset, dst_dataset in config.datasets.items():
         print("##################################################################")
-        print("Start replication from", src_dataset, "to", dst_dataset, "on", host)
+        print(
+            "Start replication from",
+            src_dataset,
+            "to",
+            dst_dataset,
+            "on",
+            config.ssh.host,
+        )
         snapshot_name = snap(src_dataset, timestamp)
 
-        remote_snaps = list_snaps(dst_dataset, host)
+        remote_snaps = list_snaps(dst_dataset, config.ssh.host)
 
         if remote_snaps:
             print("Sending incremental stream")
             latest_snap = remote_snaps[-1].split("@")[1]
-            send(snapshot_name, host, dst_dataset, base_snaphost=latest_snap)
+            send(snapshot_name, config.ssh.host, dst_dataset, base_snaphost=latest_snap)
         else:
             print("No base snaphost found, send full stream")
-            send(snapshot_name, host, dst_dataset)
+            send(snapshot_name, config.ssh.host, dst_dataset)
 
         local_snaps = list_snaps(src_dataset)
-        prune(local_snaps, retention_policy)
-        remote_snaps = list_snaps(dst_dataset, host)
-        prune(remote_snaps, retention_policy, host=host)
+        prune(local_snaps, config.retention)
+        remote_snaps = list_snaps(dst_dataset, host=config.ssh.host)
+        prune(remote_snaps, config.retention, host=config.ssh.host)
 
 
 if __name__ == "__main__":
