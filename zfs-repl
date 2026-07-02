@@ -104,7 +104,10 @@ def retain_set(snapshots, policy):
         ]
     )
     # FIXME look into actual dates to prune dailies
-    retain.update([snap for snap, _ in date_map.items()][-policy.daily :])
+    dailies = list(
+        {timestamp.date(): snap for snap, timestamp in date_map.items()}.values()
+    )
+    retain.update(dailies[-policy.daily :])
     return retain
 
 
@@ -114,6 +117,8 @@ def prune(snapshots, policy, host=None):
     retain = retain_set(snapshots, policy)
     print("Retain list:")
     pprint(sorted(retain))
+    if not retain:
+        raise AssertionError("Retain list should not be empty")
     print("Prune list:")
     prune_list = sorted(set(snapshots) - retain)
     pprint(prune_list)
